@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trivia en directo</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{display:flex;justify-content:center;font-family:"Arial Rounded MT Bold","Trebuchet MS",system-ui,sans-serif;color:#fff;background:radial-gradient(130% 65% at 50% 0,#4b1a7a,#171266 62%,#0e0a45)}
+body.transparent{background:transparent}
+#app{--u:calc(min(100vw,56.25vh)/100);--A:#ff5a6e;--B:#22c1ff;--C:#ffb52e;--D:#a47bff;--ok:#2fd36b;position:relative;width:min(100vw,56.25vh);height:100vh;display:grid;grid-template-rows:auto auto 1fr auto;gap:calc(var(--u)*3.5);padding:calc(var(--u)*5)}
+
+#hud{display:flex;align-items:center;justify-content:space-between}
+#round{font-size:calc(var(--u)*5);line-height:1.25;white-space:pre-line;opacity:.9}
+#timer{position:relative;width:calc(var(--u)*17);height:calc(var(--u)*17)}
+#timer svg{width:100%;height:100%;transform:rotate(-90deg)}
+#timer circle{stroke-width:9}
+#timer .tr{fill:rgba(8,5,50,.5);stroke:rgba(255,255,255,.2)}
+#timer .pg{fill:none;stroke:#fff;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:0}
+#timer b{position:absolute;inset:0;display:grid;place-items:center;font-size:calc(var(--u)*8)}
+#timer.low .pg{stroke:var(--A)}
+#timer.low b{color:var(--A)}
+
+#q{display:grid;place-items:center;text-align:center;min-height:calc(var(--u)*34);padding:calc(var(--u)*5) calc(var(--u)*4);border-radius:calc(var(--u)*5);background:#fff;color:#1a1464;font-size:calc(var(--u)*6.6);line-height:1.18;box-shadow:0 calc(var(--u)*1.2) 0 rgba(0,0,0,.3)}
+
+#opts{display:grid;grid-template-rows:repeat(4,1fr);gap:calc(var(--u)*2.6)}
+.opt{--c:var(--A);position:relative;display:flex;align-items:center;gap:calc(var(--u)*3);padding:0 calc(var(--u)*3);border-radius:calc(var(--u)*4);background:rgba(8,5,50,.55);border:calc(var(--u)*.7) solid var(--c);overflow:hidden;font-size:calc(var(--u)*6);transition:opacity .3s,transform .3s}
+.opt:nth-child(2){--c:var(--B)}
+.opt:nth-child(3){--c:var(--C)}
+.opt:nth-child(4){--c:var(--D)}
+.fill{position:absolute;inset:0 auto 0 0;width:0;background:var(--c);opacity:.38;transition:width .35s ease}
+.let,.txt,.pct{position:relative}
+.let{flex:none;width:calc(var(--u)*11);height:calc(var(--u)*11);border-radius:50%;background:var(--c);color:#171266;display:grid;place-items:center;font-size:calc(var(--u)*6.4)}
+.txt{flex:1;line-height:1.1}
+.pct{flex:none;min-width:calc(var(--u)*17);text-align:right;font-size:calc(var(--u)*6.4)}
+.opt.ok{background:var(--ok);border-color:#fff;color:#06361a;transform:scale(1.03)}
+.opt.ok .fill{display:none}
+.opt.no{opacity:.35}
+
+#foot{display:grid;place-items:center;min-height:calc(var(--u)*12);text-align:center;font-size:calc(var(--u)*4.6);line-height:1.25}
+
+#end{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--u)*3);padding:calc(var(--u)*8);background:rgba(14,10,69,.95);text-align:center}
+#end.on{display:flex}
+#end h1{font-size:calc(var(--u)*10)}
+#rank{width:100%;display:grid;gap:calc(var(--u)*2)}
+.row{display:flex;justify-content:space-between;gap:calc(var(--u)*3);padding:calc(var(--u)*3) calc(var(--u)*4);border-radius:calc(var(--u)*3);background:rgba(255,255,255,.12);font-size:calc(var(--u)*5.4)}
+.row:first-child{background:var(--C);color:#171266}
+.row span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#endmsg{font-size:calc(var(--u)*4.6);opacity:.85}
+
+#dot{display:none;position:absolute;top:6px;left:6px;width:10px;height:10px;border-radius:50%;background:#f33}
+.debug #dot{display:block}
+#dot.on{background:#3f3}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div id="round"></div>
+    <div id="timer">
+      <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="pg" cx="50" cy="50" r="44" pathLength="100"/></svg>
+      <b id="sec"></b>
+    </div>
+  </div>
+  <div id="q"></div>
+  <div id="opts"></div>
+  <div id="foot"></div>
+  <div id="end"><h1 id="endtitle"></h1><div id="rank"></div><p id="endmsg"></p></div>
+  <i id="dot"></i>
+</div>
+
+<script>
+(() => {
+  /* ============ CONFIGURACIÓN ============
+     Parámetros opcionales en la URL de la fuente de navegador:
+     ?time=20        segundos por pregunta
+     ?reveal=3       segundos de pausa al mostrar la respuesta
+     ?end=8          segundos de la pantalla final antes de reiniciar
+     ?ws=ws://localhost:21213/   dirección del WebSocket de TikFinity
+     ?transparent=1  fondo transparente
+     ?rounds=5       rondas (las preguntas se reparten entre ellas)
+     ?voz=Dalia      elegir voz por nombre (ver lista con ?debug=1)
+     ?voice=0        sin voz narradora
+     ?rate=1.1       velocidad de la voz
+     ?lang=es-MX     acento preferido (es-MX, es-US, es-ES...)
+     ?test=1         audiencia simulada para probar sin TikTok
+     ?debug=1        punto de conexión (verde = conectado) y log en consola */
+  const P = new URLSearchParams(location.search);
+  const CFG = {
+    ws: P.get("ws") || "ws://localhost:21213/",
+    time: +P.get("time") || 20,
+    reveal: +P.get("reveal") || 3,
+    end: +P.get("end") || 8,
+    rounds: +P.get("rounds") || 5,
+    voice: P.get("voice") !== "0",
+    rate: +P.get("rate") || 1
+  };
+
+  /* La PRIMERA opción de cada pregunta es la correcta;
+     el juego mezcla el orden de las opciones en cada ronda. */
+  const QUESTIONS = [
+    ["¿Cuál es el planeta más grande del sistema solar?","Júpiter","Saturno","Neptuno","Tierra"],
+    ["¿Cuál es la capital de Australia?","Canberra","Sídney","Melbourne","Perth"],
+    ["¿Quién pintó la Mona Lisa?","Leonardo da Vinci","Van Gogh","Picasso","Miguel Ángel"],
+    ["¿Cuántos huesos tiene el cuerpo de un adulto?","206","106","256","306"],
+    ["¿Cuál es el océano más grande del mundo?","Pacífico","Atlántico","Índico","Ártico"],
+    ["¿En qué año llegó el ser humano a la Luna?","1969","1961","1965","1972"],
+    ["¿Cuál es el río más largo de Sudamérica?","Amazonas","Orinoco","Paraná","Magdalena"],
+    ["¿Qué gas absorben las plantas para hacer la fotosíntesis?","Dióxido de carbono","Oxígeno","Nitrógeno","Hidrógeno"],
+    ["¿Cuál es el país más grande del mundo por superficie?","Rusia","Canadá","China","Estados Unidos"],
+    ["¿Cuántos jugadores de un equipo de fútbol están en la cancha?","11","9","10","12"],
+    ["¿Cuál es el planeta más cercano al Sol?","Mercurio","Venus","Marte","Júpiter"],
+    ["¿Cuántos días tiene un año bisiesto?","366","365","364","367"],
+    ["¿Cuál es el animal terrestre más grande?","Elefante africano","Jirafa","Rinoceronte","Hipopótamo"],
+    ["¿Cuál es el símbolo químico del oro?","Au","Ag","Or","Go"],
+    ["¿En qué continente está Egipto?","África","Asia","Europa","Oceanía"],
+    ["¿Cuántos colores tiene el arcoíris?","7","5","6","8"],
+    ["¿Qué órgano bombea la sangre en el cuerpo?","El corazón","El hígado","El pulmón","El riñón"],
+    ["¿Quién escribió Don Quijote de la Mancha?","Miguel de Cervantes","García Márquez","Lope de Vega","Pablo Neruda"],
+    ["¿Qué idioma tiene más hablantes nativos?","Chino mandarín","Inglés","Español","Hindi"],
+    ["¿Cuál es la capital de Francia?","París","Lyon","Marsella","Niza"],
+    ["¿Cuál es la capital de Japón?","Tokio","Osaka","Kioto","Nagoya"],
+    ["¿Cuál es la capital de Brasil?","Brasilia","Río de Janeiro","São Paulo","Salvador"],
+    ["¿Cuál es la capital de Argentina?","Buenos Aires","Córdoba","Rosario","Mendoza"],
+    ["¿Cuál es la capital de Perú?","Lima","Cusco","Arequipa","Trujillo"],
+    ["¿Cuál es la capital de Colombia?","Bogotá","Medellín","Cali","Cartagena"],
+    ["¿Cuál es la capital de Chile?","Santiago","Valparaíso","Concepción","Arica"],
+    ["¿Cuál es la capital de México?","Ciudad de México","Guadalajara","Monterrey","Puebla"],
+    ["¿Cuál es la capital de Canadá?","Ottawa","Toronto","Vancouver","Montreal"],
+    ["¿Cuál es la capital de Italia?","Roma","Milán","Venecia","Nápoles"],
+    ["¿Cuál es la capital de Alemania?","Berlín","Múnich","Hamburgo","Fráncfort"],
+    ["¿Cuál es la capital de España?","Madrid","Barcelona","Sevilla","Valencia"],
+    ["¿Cuál es la capital de Egipto?","El Cairo","Alejandría","Luxor","Guiza"],
+    ["¿Cuál es la capital de Turquía?","Ankara","Estambul","Esmirna","Bursa"],
+    ["¿Cuál es el país más poblado de Sudamérica?","Brasil","Argentina","Colombia","Perú"],
+    ["¿Cuál es la montaña más alta del mundo?","Everest","K2","Kilimanjaro","Aconcagua"],
+    ["¿Cuál es la montaña más alta de América?","Aconcagua","Denali","Chimborazo","Illimani"],
+    ["¿Cuál es el desierto cálido más grande del mundo?","Sahara","Gobi","Atacama","Kalahari"],
+    ["¿Cuál es el mamífero más grande del mundo?","Ballena azul","Elefante africano","Tiburón ballena","Orca"],
+    ["¿Cuál es el animal terrestre más rápido?","Guepardo","León","Caballo","Avestruz"],
+    ["¿Cuántos corazones tiene un pulpo?","3","1","2","8"],
+    ["¿Cuántas patas tiene una araña?","8","6","10","4"],
+    ["¿Qué animal es conocido como el rey de la selva?","León","Tigre","Elefante","Gorila"],
+    ["¿Cuál es el único mamífero capaz de volar?","Murciélago","Ardilla voladora","Lémur","Pingüino"],
+    ["¿Cuántos lados tiene un hexágono?","6","5","7","8"],
+    ["¿Cuánto es 12 por 12?","144","124","132","148"],
+    ["¿Cuál es la raíz cuadrada de 81?","9","7","8","11"],
+    ["¿Cuántos grados tiene un ángulo recto?","90","45","180","60"],
+    ["¿Cuántos minutos tiene una hora y media?","90","80","100","120"],
+    ["¿Qué número romano representa el 10?","X","V","L","C"],
+    ["¿Cuál es el resultado de 15 más 27?","42","32","52","41"],
+    ["¿Cuál es el metal líquido a temperatura ambiente?","Mercurio","Plomo","Estaño","Cobre"],
+    ["¿Cuál es la fórmula química del agua?","H2O","CO2","O2","NaCl"],
+    ["¿Qué planeta se conoce como el planeta rojo?","Marte","Venus","Júpiter","Mercurio"],
+    ["¿Cuántos planetas tiene el sistema solar?","8","9","7","10"],
+    ["¿Cuál es la estrella más cercana a la Tierra?","El Sol","Alfa Centauri","Sirio","Polaris"],
+    ["¿Qué gas necesitan los humanos para respirar?","Oxígeno","Helio","Nitrógeno","Argón"],
+    ["¿Cuál es el hueso más largo del cuerpo humano?","Fémur","Tibia","Húmero","Costilla"],
+    ["¿Cuántos dientes tiene un adulto con dentadura completa?","32","28","30","36"],
+    ["¿Cuál es el órgano más grande del cuerpo humano?","La piel","El hígado","El pulmón","El intestino"],
+    ["¿Cuántos sentidos tradicionales tiene el ser humano?","5","4","6","7"],
+    ["¿Qué vitamina produce el cuerpo con la luz del sol?","Vitamina D","Vitamina C","Vitamina A","Vitamina B12"],
+    ["¿Qué navegante llegó a América en 1492?","Cristóbal Colón","Américo Vespucio","Hernán Cortés","Francisco Pizarro"],
+    ["¿En qué año comenzó la Primera Guerra Mundial?","1914","1918","1939","1905"],
+    ["¿En qué año terminó la Segunda Guerra Mundial?","1945","1939","1950","1942"],
+    ["¿En qué año cayó el Muro de Berlín?","1989","1991","1979","1985"],
+    ["¿Qué civilización construyó Machu Picchu?","Los incas","Los mayas","Los aztecas","Los romanos"],
+    ["¿Qué civilización construyó las pirámides de Giza?","Los egipcios","Los mayas","Los romanos","Los griegos"],
+    ["¿Quién fue el primer presidente de Estados Unidos?","George Washington","Abraham Lincoln","Thomas Jefferson","John Adams"],
+    ["¿Qué emperador se coronó a sí mismo en 1804?","Napoleón Bonaparte","Julio César","Carlomagno","Luis XIV"],
+    ["¿En qué país nació la pizza?","Italia","Francia","Grecia","Estados Unidos"],
+    ["¿De qué país proviene el tango?","Argentina","Brasil","España","Cuba"],
+    ["¿Qué fruta es la base del guacamole?","Aguacate","Mango","Plátano","Pepino"],
+    ["¿Cuál es el ingrediente principal del pan?","Harina","Azúcar","Arroz","Maíz"],
+    ["¿Qué país es famoso por la Torre Eiffel?","Francia","Italia","España","Bélgica"],
+    ["¿En qué país está el Coliseo romano?","Italia","Grecia","Francia","Turquía"],
+    ["¿En qué país están las pirámides de Teotihuacán?","México","Perú","Egipto","Guatemala"],
+    ["¿En qué ciudad está el Cristo Redentor?","Río de Janeiro","Lima","Buenos Aires","Santiago"],
+    ["¿Qué país tiene forma de bota?","Italia","Portugal","Grecia","Chile"],
+    ["¿Cuál es el río más largo de Europa?","Volga","Danubio","Rin","Sena"],
+    ["¿Qué lago comparten Perú y Bolivia?","Titicaca","Maracaibo","Nicaragua","Superior"],
+    ["¿Cuál es el país con más población del mundo?","India","China","Estados Unidos","Indonesia"],
+    ["¿Qué país tiene la ciudad de Marrakech?","Marruecos","Egipto","Túnez","Argelia"],
+    ["¿Cuál es la moneda oficial de Japón?","Yen","Won","Yuan","Dólar"],
+    ["¿Cuál es la moneda oficial del Reino Unido?","Libra esterlina","Euro","Dólar","Franco"],
+    ["¿Qué deporte se juega en Wimbledon?","Tenis","Golf","Críquet","Rugby"],
+    ["¿Cuántos anillos tiene el símbolo olímpico?","5","4","6","7"],
+    ["¿Qué país ganó el Mundial de fútbol de 2022?","Argentina","Francia","Brasil","Croacia"],
+    ["¿Qué país ha ganado más Mundiales de fútbol masculinos?","Brasil","Alemania","Argentina","Italia"],
+    ["¿Cuántos jugadores de baloncesto hay en cancha por equipo?","5","6","7","11"],
+    ["¿En qué deporte se usa un balón ovalado?","Rugby","Voleibol","Baloncesto","Tenis"],
+    ["¿Quién es conocido como el Rey del Pop?","Michael Jackson","Elvis Presley","Prince","Justin Timberlake"],
+    ["¿Qué instrumento tiene 88 teclas?","Piano","Acordeón","Órgano","Guitarra"],
+    ["¿Cuántas cuerdas tiene una guitarra estándar?","6","4","5","7"],
+    ["¿Qué director creó la película Titanic de 1997?","James Cameron","Steven Spielberg","Christopher Nolan","Ridley Scott"],
+    ["¿Qué red social es famosa por sus videos cortos y bailes?","TikTok","LinkedIn","Facebook","Pinterest"],
+    ["¿Quién fundó Microsoft junto con Paul Allen?","Bill Gates","Steve Jobs","Elon Musk","Mark Zuckerberg"],
+    ["¿Qué significa la sigla USB?","Bus Universal en Serie","Unidad de Sistema Básico","Unión Serial Binaria","Usuario de Sistema Base"],
+    ["¿Qué lenguaje da estilo a las páginas web?","CSS","HTML","Python","SQL"],
+    ["¿Qué empresa creó el iPhone?","Apple","Samsung","Google","Nokia"],
+    ["¿Qué océano baña las costas de Chile?","Pacífico","Atlántico","Índico","Ártico"]
+  ].map(a => ({ q: a[0], o: a.slice(1) }));
+
+  /* ============ ESTADO ============ */
+  const $ = id => document.getElementById(id);
+  const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const S = { phase: "idle", order: [], qi: 0, opts: [], votes: new Map(), counts: [0, 0, 0, 0], deadline: 0, scores: new Map() };
+  let wait;
+
+  if (P.has("transparent")) document.body.classList.add("transparent");
+  if (P.has("debug")) document.body.classList.add("debug");
+
+  /* ============ VOZ (Web Speech API) ============ */
+  let spk = 0;
+  /* Prefiere voces neuronales (Edge: Natural/Online), luego las de Google, luego el resto */
+  function pickVoice() {
+    const L = ["es-mx", "es-us", "es-419", "es-es"];
+    const norm = v => v.lang.replace("_", "-").toLowerCase();
+    const name = (P.get("voz") || "").toLowerCase(), lang = (P.get("lang") || "").toLowerCase();
+    const score = v => {
+      const n = v.name.toLowerCase(), l = norm(v), k = L.indexOf(l);
+      return (name && n.includes(name) ? 1000 : 0) + (lang && l === lang ? 500 : 0)
+        + (/natural/.test(n) ? 100 : /online|neural/.test(n) ? 60 : /google/.test(n) ? 30 : 0)
+        + (k >= 0 ? 10 - k : 0);
+    };
+    return speechSynthesis.getVoices().filter(v => norm(v).startsWith("es")).sort((a, b) => score(b) - score(a))[0];
+  }
+  /* Narra el texto y llama a cb al terminar. Si no hay voz o no suena, llama a cb enseguida. */
+  function speak(text, cb) {
+    const id = ++spk;
+    let done = false, t1, t2;
+    const end = () => { if (done || id !== spk) return; done = true; clearTimeout(t1); clearTimeout(t2); cb && cb(); };
+    if (!CFG.voice || !("speechSynthesis" in window)) return end();
+    speechSynthesis.cancel();
+    const v = pickVoice();
+    if (!v) return end();
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = v; u.lang = v.lang; u.rate = CFG.rate;
+    u.onstart = () => clearTimeout(t1);
+    u.onend = u.onerror = end;
+    t1 = setTimeout(end, 2500);                                   /* no arrancó: sigue sin voz */
+    t2 = setTimeout(end, text.length * 90 / CFG.rate + 4000);     /* tope por si nunca termina */
+    setTimeout(() => speechSynthesis.speak(u), 50);
+  }
+
+  /* ============ FLUJO DEL JUEGO ============ */
+  function start() {
+    clearTimeout(wait);
+    $("end").classList.remove("on");
+    S.order = shuffle(QUESTIONS.map((_, i) => i));
+    S.qi = 0;
+    S.perRound = Math.ceil(QUESTIONS.length / CFG.rounds);
+    S.scores = new Map();
+    showQuestion();
+  }
+
+  function showQuestion() {
+    const item = QUESTIONS[S.order[S.qi]];
+    S.opts = shuffle(item.o.map((t, i) => ({ t, ok: i === 0 })));
+    S.votes = new Map();
+    S.counts = [0, 0, 0, 0];
+    $("q").textContent = item.q;
+    $("round").textContent = `Ronda ${Math.floor(S.qi / S.perRound) + 1} de ${Math.ceil(S.order.length / S.perRound)}\nPregunta ${S.qi % S.perRound + 1} de ${Math.min(S.perRound, S.order.length - S.qi + S.qi % S.perRound)}`;
+    const box = $("opts");
+    box.textContent = "";
+    S.opts.forEach((o, i) => {
+      const d = document.createElement("div");
+      d.className = "opt";
+      d.innerHTML = '<div class="fill"></div><div class="let"></div><div class="txt"></div><div class="pct">0%</div>';
+      d.children[1].textContent = "ABCD"[i];
+      d.children[2].textContent = o.t;
+      box.appendChild(d);
+    });
+    $("foot").textContent = "Escribe A, B, C o D en el chat";
+    $("timer").classList.remove("low");
+    S.phase = "reading";
+    $("sec").textContent = CFG.time;
+    document.querySelector(".pg").style.strokeDashoffset = 0;
+    speak(`Pregunta ${S.qi + 1}. ${item.q} ${S.opts.map((o, i) => `${"ABCD"[i]}: ${o.t}.`).join(" ")}`, () => {
+      S.deadline = Date.now() + CFG.time * 1000;
+      S.phase = "question";
+    });
+  }
+
+  function reveal() {
+    S.phase = "reveal";
+    const ok = S.opts.findIndex(o => o.ok);
+    [...$("opts").children].forEach((d, i) => d.classList.add(i === ok ? "ok" : "no"));
+    const winners = [...S.votes.values()].filter(v => v.i === ok);
+    winners.forEach(v => {
+      const s = S.scores.get(v.id) || { name: v.name, pts: 0 };
+      s.pts += 100 + Math.round(50 * v.left / CFG.time); /* 100 + bono por rapidez */
+      S.scores.set(v.id, s);
+    });
+    $("foot").textContent = winners.length
+      ? `✔ ${winners.length} ${winners.length > 1 ? "acertaron" : "acertó"}: ${winners.slice(0, 3).map(w => w.name).join(", ")}${winners.length > 3 ? " y más" : ""}`
+      : "Nadie acertó esta vez";
+    let n = 0;
+    const go = () => { if (++n === 2) next(); };
+    wait = setTimeout(go, CFG.reveal * 1000);
+    speak(`La respuesta correcta es ${"ABCD"[ok]}: ${S.opts[ok].t}.`, go);
+  }
+
+  function next() {
+    S.qi++;
+    if (S.qi >= S.order.length) finish(true);
+    else if (S.qi % S.perRound === 0) finish(false);
+    else showQuestion();
+  }
+
+  function finish(final) {
+    S.phase = "end";
+    const top = [...S.scores.values()].sort((a, b) => b.pts - a.pts).slice(0, 5);
+    const r = $("rank");
+    r.textContent = "";
+    if (!top.length) top.push({ name: "Nadie participó todavía", pts: null });
+    top.forEach((s, i) => {
+      const d = document.createElement("div"), a = document.createElement("span"), b = document.createElement("span");
+      d.className = "row";
+      a.textContent = s.pts === null ? s.name : `${i + 1}. ${s.name}`;
+      b.textContent = s.pts === null ? "" : `${s.pts} pts`;
+      d.append(a, b);
+      r.appendChild(d);
+    });
+    $("endtitle").textContent = final ? "¡Fin del juego!" : `Ronda ${S.qi / S.perRound} completada`;
+    $("end").classList.add("on");
+    if (S.scores.size) speak(final ? `¡Fin del juego! El campeón es ${top[0].name}.` : `Ronda ${S.qi / S.perRound} completada. Va primero ${top[0].name}.`);
+    let n = CFG.end;
+    const tick = () => {
+      $("endmsg").textContent = `${final ? "Nueva partida" : "Siguiente ronda"} en ${n} s`;
+      if (n-- > 0) { wait = setTimeout(tick, 1000); return; }
+      if (final) start(); else { $("end").classList.remove("on"); showQuestion(); }
+    };
+    tick();
+  }
+
+  /* Temporizador */
+  setInterval(() => {
+    if (S.phase !== "question") return;
+    const left = Math.max(0, (S.deadline - Date.now()) / 1000);
+    $("sec").textContent = Math.ceil(left);
+    document.querySelector(".pg").style.strokeDashoffset = 100 * (1 - left / CFG.time);
+    $("timer").classList.toggle("low", left <= 5);
+    if (left <= 0) reveal();
+  }, 100);
+
+  /* ============ VOTOS ============ */
+  function bars() {
+    const tot = S.counts.reduce((a, b) => a + b, 0);
+    [...$("opts").children].forEach((d, i) => {
+      const p = tot ? Math.round(S.counts[i] / tot * 100) : 0;
+      d.children[0].style.width = p + "%";
+      d.children[3].textContent = p + "%";
+    });
+  }
+
+  /* Solo cuenta el primer voto válido de cada usuario por pregunta */
+  function vote(id, name, text) {
+    if (S.phase !== "question" && S.phase !== "reading") return;
+    const m = String(text).trim().match(/^([a-d1-4])[\s.)!:]*$/i);
+    if (!m || S.votes.has(id)) return;
+    const c = m[1].toLowerCase(), i = /\d/.test(c) ? c - 1 : c.charCodeAt(0) - 97;
+    S.votes.set(id, { id, name, i, left: S.phase === "reading" ? CFG.time : Math.max(0, (S.deadline - Date.now()) / 1000) });
+    S.counts[i]++;
+    bars();
+  }
+
+  /* ============ CONEXIÓN CON TIKFINITY ============ */
+  let retry = 1000;
+  function onMsg(m) {
+    if (!m || typeof m !== "object") return;
+    const ev = String(m.event || m.type || "").toLowerCase();
+    if (ev !== "chat" && ev !== "comment") return;
+    const d = m.data || m;
+    const id = String(d.uniqueId || d.userId || d.nickname || "");
+    if (id) vote(id, d.nickname || d.uniqueId || id, d.comment ?? d.text ?? "");
+  }
+
+  function connect() {
+    let ws;
+    try { ws = new WebSocket(CFG.ws); } catch (e) { return setTimeout(connect, 5000); }
+    ws.onopen = () => { retry = 1000; $("dot").classList.add("on"); };
+    ws.onclose = () => {
+      $("dot").classList.remove("on");
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 1.5, 10000);
+    };
+    ws.onmessage = e => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (P.has("debug")) console.log("TikFinity:", m);
+      [].concat(m).forEach(onMsg);
+    };
+  }
+
+  /* Audiencia simulada para pruebas */
+  if (P.has("test")) {
+    setInterval(() => {
+      const u = "usuario" + ((Math.random() * 40 | 0) + 1);
+      vote(u, u, "ABCD"[Math.random() * 4 | 0]);
+    }, 250);
+  }
+
+  connect();
+  if ("speechSynthesis" in window) { speechSynthesis.getVoices(); if (P.has("debug")) speechSynthesis.onvoiceschanged = () => console.log("Voces:", speechSynthesis.getVoices().map(v => v.name + " (" + v.lang + ")")); setTimeout(start, 1000); } else start();
+})();
+</script>
+</body>
+</html>
